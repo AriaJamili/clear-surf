@@ -8,7 +8,7 @@ import models
 from models.base import BaseModel
 from models.utils import chunk_batch
 from systems.utils import update_module_step
-from nerfacc import ContractionType, OccupancyGrid, ray_marching, render_weight_from_density, accumulate_along_rays
+from nerfacc import OccGridEstimator, render_weight_from_density, accumulate_along_rays
 
 
 @models.register('nerf')
@@ -23,21 +23,19 @@ class NeRFModel(BaseModel):
             self.near_plane, self.far_plane = 0.2, 1e4
             self.cone_angle = 10**(math.log10(self.far_plane) / self.config.num_samples_per_ray) - 1. # approximate
             self.render_step_size = 0.01 # render_step_size = max(distance_to_camera * self.cone_angle, self.render_step_size)
-            self.contraction_type = ContractionType.UN_BOUNDED_SPHERE
         else:
             self.occupancy_grid_res = 128
             self.near_plane, self.far_plane = None, None
             self.cone_angle = 0.0
             self.render_step_size = 1.732 * 2 * self.config.radius / self.config.num_samples_per_ray
-            self.contraction_type = ContractionType.AABB
 
-        self.geometry.contraction_type = self.contraction_type
+        #self.geometry.contraction_type = self.contraction_type
 
         if self.config.grid_prune:
-            self.occupancy_grid = OccupancyGrid(
+            self.occupancy_grid = OccGridEstimator(
                 roi_aabb=self.scene_aabb,
                 resolution=self.occupancy_grid_res,
-                contraction_type=self.contraction_type
+                levels=1
             )
         self.randomized = self.config.randomized
         self.background_color = None
@@ -80,10 +78,8 @@ class NeRFModel(BaseModel):
             return rgb, density[...,None]
 
         with torch.no_grad():
-            ray_indices, t_starts, t_ends = ray_marching(
+            ray_indices, t_starts, t_ends = self.occupancy_grid.sampling(
                 rays_o, rays_d,
-                scene_aabb=None if self.config.learned_background else self.scene_aabb,
-                grid=self.occupancy_grid if self.config.grid_prune else None,
                 sigma_fn=sigma_fn,
                 near_plane=self.near_plane, far_plane=self.far_plane,
                 render_step_size=self.render_step_size,
@@ -102,7 +98,7 @@ class NeRFModel(BaseModel):
         density, feature = self.geometry(positions) 
         rgb = self.texture(feature, t_dirs)
 
-        weights = render_weight_from_density(t_starts, t_ends, density[...,None], ray_indices=ray_indices, n_rays=n_rays)
+        weights , _, _= render_weight_from_density(t_starts, t_ends, density[...,None], ray_indices=ray_indices, n_rays=n_rays)
         opacity = accumulate_along_rays(weights, ray_indices, values=None, n_rays=n_rays)
         depth = accumulate_along_rays(weights, ray_indices, values=midpoints, n_rays=n_rays)
         comp_rgb = accumulate_along_rays(weights, ray_indices, values=rgb, n_rays=n_rays)
