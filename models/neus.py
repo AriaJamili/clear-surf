@@ -40,13 +40,11 @@ class VarianceNetwork(nn.Module):
             else:
                 self.mod_val = min((global_step / self.reach_max_steps) * (self.max_inv_s - self.prev_inv_s) + self.prev_inv_s, self.max_inv_s)
 
-
 @models.register('trans-neus')
 class TransNeuSModel(BaseModel):
     def setup(self):
         self.geometry = models.make(self.config.geometry.name, self.config.geometry)
         self.texture = models.make(self.config.texture.name, self.config.texture)
-        self.geometry.contraction_type_sphere = False
 
         if self.config.learned_background:
             self.geometry_bg = models.make(self.config.geometry_bg.name, self.config.geometry_bg)
@@ -86,7 +84,9 @@ class TransNeuSModel(BaseModel):
         self.cos_anneal_ratio = 1.0 if cos_anneal_end == 0 else min(1.0, global_step / cos_anneal_end)
 
         def occ_eval_fn(x):
-            sdf = self.geometry(x, with_grad=False, with_feature=False)
+            sdf,_ = self.geometry(x.detach(), with_grad=False, with_feature=False)
+            sdf = sdf.detach()
+            #density = density.detach()
             inv_s = self.variance(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)
             inv_s = inv_s.expand(sdf.shape[0], 1)
             estimated_next_sdf = sdf[...,None] - self.render_step_size * 0.5
@@ -95,6 +95,7 @@ class TransNeuSModel(BaseModel):
             next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
             p = prev_cdf - next_cdf
             c = prev_cdf
+            #scal = torch.exp(-density)
             alpha = ((p + 1e-5) / (c + 1e-5)).view(-1, 1).clip(0.0, 1.0)
             return alpha
         
@@ -112,7 +113,7 @@ class TransNeuSModel(BaseModel):
         mesh = self.geometry.isosurface()
         return mesh
 
-    def get_alpha(self, sdf, normal, dirs, dists):
+    def get_alpha(self, sdf, density, normal, dirs, dists):
         inv_s = self.variance(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
         inv_s = inv_s.expand(sdf.shape[0], 1)
 
@@ -132,6 +133,8 @@ class TransNeuSModel(BaseModel):
 
         p = prev_cdf - next_cdf
         c = prev_cdf
+        scal = torch.exp(-density * dists)
+        p = scal.reshape(-1, 1) * p
 
         alpha = ((p + 1e-5) / (c + 1e-5)).view(-1).clip(0.0, 1.0)
         return alpha
@@ -220,14 +223,13 @@ class TransNeuSModel(BaseModel):
         positions = t_origins + t_dirs * midpoints
         dists = t_ends - t_starts
 
-        if self.config.geometry.grad_type == 'finite_difference':
-            sdf, sdf_grad, feature, sdf_laplace = self.geometry(positions, with_grad=True, with_feature=True, with_laplace=True)
+        if self.config.geometry.geometry_neus.grad_type == 'finite_difference':
+            sdf, density, sdf_grad, feature, sdf_laplace = self.geometry(positions, with_grad=True, with_feature=True, with_laplace=True)
         else:
-            sdf, sdf_grad, feature = self.geometry(positions, with_grad=True, with_feature=True)
+            sdf, density, sdf_grad, feature = self.geometry(positions, with_grad=True, with_feature=True)
         normal = F.normalize(sdf_grad, p=2, dim=-1)
-        alpha = self.get_alpha(sdf, normal, t_dirs, dists)[...,None]
+        alpha = self.get_alpha(sdf, density, normal, t_dirs, dists)[...,None]
         rgb = self.texture(feature, t_dirs, normal)
-
         weights, _ = render_weight_from_alpha(alpha.squeeze(), ray_indices=ray_indices, n_rays=n_rays)
         opacity = accumulate_along_rays(weights, ray_indices=ray_indices, n_rays=n_rays)
         depth = accumulate_along_rays(weights, ray_indices=ray_indices, values=midpoints, n_rays=n_rays)
@@ -254,7 +256,7 @@ class TransNeuSModel(BaseModel):
                 'intervals': dists.view(-1),
                 'ray_indices': ray_indices.view(-1)                
             })
-            if self.config.geometry.grad_type == 'finite_difference':
+            if self.config.geometry.geometry_neus.grad_type == 'finite_difference':
                 out.update({
                     'sdf_laplace_samples': sdf_laplace
                 })

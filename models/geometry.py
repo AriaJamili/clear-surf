@@ -71,7 +71,7 @@ class BaseImplicitGeometry(BaseModel):
                 raise NotImplementedError("Please do not use mc-torch. It currently has some scaling issues I haven't fixed yet.")
             self.helper = MarchingCubeHelper(self.config.isosurface.resolution, use_torch=self.config.isosurface.method=='mc-torch')   
         self.radius = self.config.radius
-        self.contraction_type = None # assigned in system
+        self.contraction_type_sphere = False # assigned in system
 
     def forward_level(self, points):
         raise NotImplementedError
@@ -134,7 +134,6 @@ class VolumeDensity(BaseImplicitGeometry):
     
     def update_step(self, epoch, global_step):
         update_module_step(self.encoding_with_network, epoch, global_step)
-
 
 @models.register('volume-sdf')
 class VolumeSDF(BaseImplicitGeometry):
@@ -233,4 +232,175 @@ class VolumeSDF(BaseImplicitGeometry):
             else:
                 raise ValueError(f"Unknown finite_difference_eps={self.finite_difference_eps}")
 
+@models.register('volume-enc')
+class VolumeEnc(BaseImplicitGeometry):
+    def setup(self):
+        self.n_input_dims = self.config.get('n_input_dims', 3)
+        self.n_output_dims = self.config.feature_dim
+        self.encoding_with_network = get_encoding_with_network(self.n_input_dims, self.n_output_dims, self.config.xyz_encoding_config, self.config.mlp_network_config)
+    
+    def forward(self, points):
+        points = contract_to_unisphere(points, self.radius, self.contraction_type_sphere)
+        feature = self.encoding_with_network(points.view(-1, self.n_input_dims)).view(*points.shape[:-1], self.n_output_dims).float()
+        return feature
+        
+    def update_step(self, epoch, global_step):
+        update_module_step(self.encoding_with_network, epoch, global_step)
 
+@models.register('volume-enc-sdf')
+class VolumeEncSDF(BaseImplicitGeometry):
+    def setup(self):
+        self.n_input_dims = self.config.get('n_input_dims', 67)
+        self.n_output_dims = self.config.feature_dim
+        self.network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config) 
+        self.grad_type = self.config.grad_type
+        self.finite_difference_eps = self.config.get('finite_difference_eps', 1e-3)
+        # the actual value used in training
+        # will update at certain steps if finite_difference_eps="progressive"
+        self._finite_difference_eps = None
+        if self.grad_type == 'finite_difference':
+            rank_zero_info(f"Using finite difference to compute gradients with eps={self.finite_difference_eps}")
+    
+    def forward(self, points, features, with_grad=True):
+        with torch.inference_mode(torch.is_inference_mode_enabled() and not (with_grad and self.grad_type == 'analytic')):
+            with torch.set_grad_enabled(self.training or (with_grad and self.grad_type == 'analytic')):
+                if with_grad and self.grad_type == 'analytic':
+                    if not self.training:
+                        points = points.clone() # points may be in inference mode, get a copy to enable grad
+                    points.requires_grad_(True)
+                points_ = points # points in the original scale
+                points = contract_to_unisphere(points, self.radius, self.contraction_type_sphere) # points normalized to (0, 1)
+                network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
+                out = self.network(network_inp).view(*network_inp.shape[:-1], self.n_output_dims).float()
+                sdf, feature = out[...,0], out
+                if 'sdf_activation' in self.config:
+                    sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
+                if 'feature_activation' in self.config:
+                    feature = get_activation(self.config.feature_activation)(feature)     
+                grad = None          
+                if with_grad:
+                    if self.grad_type == 'analytic':
+                        grad = torch.autograd.grad(
+                            sdf, points_, grad_outputs=torch.ones_like(sdf),
+                            create_graph=True, retain_graph=True, only_inputs=True
+                        )[0]
+                    elif self.grad_type == 'finite_difference':
+                        eps = self._finite_difference_eps
+                        offsets = torch.as_tensor(
+                            [
+                                [eps, 0.0, 0.0],
+                                [-eps, 0.0, 0.0],
+                                [0.0, eps, 0.0],
+                                [0.0, -eps, 0.0],
+                                [0.0, 0.0, eps],
+                                [0.0, 0.0, -eps],
+                            ]
+                        ).to(points_)
+                        points_d_ = (points_[...,None,:] + offsets).clamp(-self.radius, self.radius)
+                        points_d = scale_anything(points_d_, (-self.radius, self.radius), (0, 1))
+                        points_d_sdf = self.network(self.encoding(points_d.view(-1, 3)))[...,0].view(*points.shape[:-1], 6).float()
+                        grad = 0.5 * (points_d_sdf[..., 0::2] - points_d_sdf[..., 1::2]) / eps  
+                        
+        return sdf, feature, grad
+    
+    def forward_level(self, features):
+        sdf = self.network(features).view(*features.shape[:-1], self.n_output_dims)[...,0]
+        if 'sdf_activation' in self.config:
+            sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
+        return sdf        
+    
+    def update_step(self, epoch, global_step):
+        update_module_step(self.network, epoch, global_step)  
+        if self.grad_type == 'finite_difference':
+            if isinstance(self.finite_difference_eps, float):
+                self._finite_difference_eps = self.finite_difference_eps
+            elif self.finite_difference_eps == 'progressive':
+                hg_conf = self.config.xyz_encoding_config
+                assert hg_conf.otype == "ProgressiveBandHashGrid", "finite_difference_eps='progressive' only works with ProgressiveBandHashGrid"
+                current_level = min(
+                    hg_conf.start_level + max(global_step - hg_conf.start_step, 0) // hg_conf.update_steps,
+                    hg_conf.n_levels
+                )
+                grid_res = hg_conf.base_resolution * hg_conf.per_level_scale**(current_level - 1)
+                grid_size = 2 * self.config.radius / grid_res
+                if grid_size != self._finite_difference_eps:
+                    rank_zero_info(f"Update finite_difference_eps to {grid_size}")
+                self._finite_difference_eps = grid_size
+            else:
+                raise ValueError(f"Unknown finite_difference_eps={self.finite_difference_eps}")
+
+@models.register('volume-enc-density')
+class VolumeEncDensity(BaseImplicitGeometry):
+    def setup(self):
+        self.n_input_dims = self.config.get('n_input_dims', 64)
+        self.n_output_dims = self.config.feature_dim
+        self.network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config) 
+    
+    def forward(self, features):
+        out = self.network(features).view(*features.shape[:-1], self.n_output_dims).float()
+        density, feature = out[...,0], out
+        if 'density_activation' in self.config:
+            density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
+        if 'feature_activation' in self.config:
+            feature = get_activation(self.config.feature_activation)(feature)
+        return density, feature
+    
+    def forward_level(self, features):
+        density = self.network(features).view(*features.shape[:-1], self.n_output_dims)[...,0]
+        if 'density_activation' in self.config:
+            density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
+        return -density      
+    
+    def update_step(self, epoch, global_step):
+        update_module_step(self.network, epoch, global_step)
+
+@models.register('volume-cost')
+class VolumeCost(BaseImplicitGeometry):
+    def setup(self):
+        self.n_input_dims = self.config.get('n_input_dims', 30)
+        self.n_output_dims = self.config.feature_dim
+        self.network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config)     
+    def forward(self, features_sdf, features_density):
+        network_inp = torch.cat([features_sdf.view(-1, features_sdf.shape[-1]), features_density.view(-1, features_density.shape[-1])], dim=-1)
+        feature = self.network(network_inp).view(*features_sdf.shape[:-1], self.n_output_dims).float()
+        return feature
+        
+    def update_step(self, epoch, global_step):
+        update_module_step(self.network, epoch, global_step)
+
+@models.register('volume')
+class Volume(BaseImplicitGeometry):
+    def setup(self):
+        self.geometry_enc = models.make(self.config.geometry_enc.name, self.config.geometry_enc)
+        self.geometry_neus = models.make(self.config.geometry_neus.name, self.config.geometry_neus)
+        self.geometry_nerf = models.make(self.config.geometry_nerf.name, self.config.geometry_nerf)
+        self.geometry_cost = models.make(self.config.geometry_cost.name, self.config.geometry_cost)
+    
+    def forward(self, points, with_grad=True, with_feature=True):
+        enc_features = self.geometry_enc(points)
+        sdf, feature_sdf, sdf_grad = self.geometry_neus(points, enc_features, with_grad)
+        density, feature_density = self.geometry_nerf(enc_features)
+        feature = self.geometry_cost(feature_sdf, feature_density)
+        if 'feature_activation' in self.config:
+            feature = get_activation(self.config.feature_activation)(feature)
+
+        rv = [sdf, density]
+        if with_grad:
+            rv.append(sdf_grad)
+        if with_feature:
+            rv.append(feature)
+        rv = [v if self.training else v.detach() for v in rv]
+        return rv
+        
+    def forward_level(self, points):
+        enc_features = self.geometry_enc(points)
+        sdf, _ , _ = self.geometry_neus(points, enc_features)
+        if 'sdf_activation' in self.config:
+            sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
+        return sdf     
+    
+    def update_step(self, epoch, global_step):
+        update_module_step(self.geometry_enc, epoch, global_step)
+        update_module_step(self.geometry_neus, epoch, global_step)
+        update_module_step(self.geometry_nerf, epoch, global_step)
+        update_module_step(self.geometry_cost, epoch, global_step)
