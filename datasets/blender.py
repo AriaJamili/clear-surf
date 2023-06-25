@@ -31,38 +31,36 @@ class BlenderDatasetBase():
             W, H = int(meta['w']), int(meta['h'])
         else:
             W, H = 800, 800
-
-        if 'img_wh' in self.config:
-            w, h = self.config.img_wh
-            assert round(W / w * h) == H
-        elif 'img_downscale' in self.config:
-            w, h = W // self.config.img_downscale, H // self.config.img_downscale
-        else:
-            raise KeyError("Either img_wh or img_downscale should be specified.")
         
-        self.w, self.h = w, h
+        self.w, self.h = W, H
         self.img_wh = (self.w, self.h)
 
         self.near, self.far = self.config.near_plane, self.config.far_plane
 
-        self.focal = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) # scaled focal length
+        self.focal = meta['fl_x']
+
+        self.apply_mask = self.config.apply_mask
 
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = \
-            get_ray_directions(self.w, self.h, self.focal, self.focal, self.w//2, self.h//2).to(self.rank) # (h, w, 3)           
+            get_ray_directions(self.w, self.h, self.focal, self.focal, meta['cx'], meta['cy']).to(self.rank) # (h, w, 3)           
 
         self.all_c2w, self.all_images, self.all_fg_masks = [], [], []
+        
+        #cam_trans = torch.diag(torch.tensor([1, -1, -1, 1], dtype=torch.float32))
 
         for i, frame in enumerate(meta['frames']):
             c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
+            #c2w = c2w @ cam_trans  # To OpenCV
             self.all_c2w.append(c2w)
 
-            img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}.png")
+            img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}")
             img = Image.open(img_path)
-            img = img.resize(self.img_wh, Image.BICUBIC)
             img = TF.to_tensor(img).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
 
-            self.all_fg_masks.append(img[..., -1]) # (h, w)
+            mask_path = os.path.join(self.config.root_dir, f"{frame['file_segmap_path']}")
+
+            self.all_fg_masks.append(torch.from_numpy(np.load(mask_path)))
             self.all_images.append(img[...,:3])
 
         self.all_c2w, self.all_images, self.all_fg_masks = \
