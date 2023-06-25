@@ -4,8 +4,8 @@ seed: 42
 
 dataset:
   name: blender
-  scene: ???
-  root_dir: ./load/nerf_synthetic/${dataset.scene}
+  scene: chair
+  root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/${dataset.scene}
   img_wh:
     - 800
     - 800

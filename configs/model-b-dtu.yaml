@@ -1,28 +1,28 @@
-name: tns-dtu-${basename:${dataset.root_dir}}
+name: Model-A-dtu-${basename:${dataset.root_dir}}
 tag: ""
 seed: 42
 
 dataset:
   name: dtu
-  root_dir: /gris/gris-f/homestud/ajamili/datasets/DTU/scan63
+  root_dir: /gris/gris-f/homestud/ajamili/datasets/DTU/scan114
   cameras_file: cameras.npz
   img_downscale: 2 # specify training image size by either img_wh or img_downscale
   n_test_traj_steps: 60
   apply_mask: false
 
 model:
-  name: trans-nerf-neus
-  radius: 1.0
+  name: Model-B
+  radius: 2.0
   num_samples_per_ray: 1024
-  train_num_rays: 256
+  train_num_rays: 1024
   max_train_num_rays: 8192
   grid_prune: true
   grid_prune_occ_thre: 0.001
   dynamic_ray_sampling: true
   batch_image_sampling: true
   randomized: true
-  ray_chunk: 2048
-  cos_anneal_end: 20000
+  ray_chunk: 4096
+  cos_anneal_end: 5000
   learned_background: false
   background_color: random
   variance:
@@ -31,7 +31,7 @@ model:
   geometry_neus:
     name: volume-sdf
     radius: ${model.radius}
-    feature_dim: 13
+    feature_dim: 15
     grad_type: analytic
     isosurface:
       method: mc
@@ -51,13 +51,14 @@ model:
       activation: ReLU
       output_activation: none
       n_neurons: 64
-      n_hidden_layers: 1
+      n_hidden_layers: 2
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
   geometry_nerf:
-    name: volume-density
+    name: volume-sdf-density
     radius: ${model.radius}
+    input_feature_dim: ${model.geometry_neus.feature_dim}
     feature_dim: 16
     density_activation: trunc_exp
     density_bias: -1
@@ -81,8 +82,7 @@ model:
       n_hidden_layers: 1
   texture:
     name: volume-radiance
-    last: ${add:${model.geometry_nerf.feature_dim},${model.geometry_neus.feature_dim}}
-    input_feature_dim: ${add:${model.texture.last},3} # surface normal as additional input
+    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},3} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
@@ -102,7 +102,7 @@ system:
     lambda_rgb_l1: 1.
     lambda_mask: 0.0
     lambda_eikonal: 0.1
-    lambda_curvature: 0.
+    lambda_curvature: 0.0
     lambda_sparsity: 0.0
     lambda_distortion: 0.0
     lambda_distortion_bg: 0.0
@@ -151,7 +151,7 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 20000
+  max_steps: 10000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
   val_check_interval: 5000
