@@ -22,7 +22,7 @@ model:
   batch_image_sampling: true
   randomized: true
   ray_chunk: 2048
-  cos_anneal_end: 10000
+  cos_anneal_end: 30000
   learned_background: false
   background_color: random
   variance:
@@ -128,10 +128,6 @@ system:
         lr: 0.01
       texture:
         lr: 0.01
-      #geometry_bg:
-      #  lr: 0.01
-      #texture_bg:
-      #  lr: 0.01
       variance:
         lr: 0.001
   constant_steps: 5000
@@ -158,7 +154,7 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 10000
+  max_steps: 30000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
   val_check_interval: 5000

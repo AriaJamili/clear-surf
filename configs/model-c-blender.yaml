@@ -105,10 +105,10 @@ model:
 system:
   name: neus-system
   loss:
-    lambda_rgb_mse: 10.
-    lambda_rgb_l1: 0.
+    lambda_rgb_mse: 1.
+    lambda_rgb_l1: 0.5
     lambda_mask: 0.0
-    lambda_eikonal: 0.1
+    lambda_eikonal: 0.15
     lambda_curvature: 0.
     lambda_sparsity: 0.0
     lambda_distortion: 0.

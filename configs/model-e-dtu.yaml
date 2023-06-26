@@ -1,17 +1,17 @@
-name: Model-B-dtu-${basename:${dataset.root_dir}}
+name: Model-E-dtu-${basename:${dataset.root_dir}}
 tag: ""
 seed: 42
 
 dataset:
   name: dtu
-  root_dir: /gris/gris-f/homestud/ajamili/datasets/DTU/scan114
+  root_dir: /gris/gris-f/homestud/ajamili/datasets/DTU/scan24
   cameras_file: cameras.npz
   img_downscale: 2 # specify training image size by either img_wh or img_downscale
   n_test_traj_steps: 60
   apply_mask: false
 
 model:
-  name: Model-B
+  name: Model-E
   radius: 1.0
   num_samples_per_ray: 1024
   train_num_rays: 1024
@@ -21,17 +21,17 @@ model:
   dynamic_ray_sampling: true
   batch_image_sampling: true
   randomized: true
-  ray_chunk: 4096
+  ray_chunk: 2048
   cos_anneal_end: 30000
   learned_background: false
   background_color: random
   variance:
     init_val: 0.3
     modulate: false
-  geometry_neus:
-    name: volume-sdf
+  geometry:
+    name: volume-sdfdensity
     radius: ${model.radius}
-    feature_dim: 15
+    feature_dim: 17
     grad_type: analytic
     isosurface:
       method: mc
@@ -51,38 +51,13 @@ model:
       activation: ReLU
       output_activation: none
       n_neurons: 64
-      n_hidden_layers: 2
+      n_hidden_layers: 1
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
-  geometry_nerf:
-    name: volume-sdf-density
-    radius: ${model.radius}
-    input_feature_dim: ${model.geometry_neus.feature_dim}
-    feature_dim: 16
-    density_activation: trunc_exp
-    density_bias: -1
-    isosurface:
-      method: mc
-      resolution: 256
-      chunk: 2097152
-      threshold: 5.0
-    xyz_encoding_config:
-      otype: HashGrid
-      n_levels: 16
-      n_features_per_level: 2
-      log2_hashmap_size: 19
-      base_resolution: 16
-      per_level_scale: 1.447269237440378
-    mlp_network_config:
-      otype: FullyFusedMLP
-      activation: ReLU
-      output_activation: none
-      n_neurons: 64
-      n_hidden_layers: 1
   texture:
     name: volume-radiance
-    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},3} # surface normal as additional input
+    input_feature_dim: ${add:${model.geometry.feature_dim},3} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
@@ -115,9 +90,7 @@ system:
       betas: [0.9, 0.99]
       eps: 1.e-15
     params:
-      geometry_neus:
-        lr: 0.01
-      geometry_nerf:
+      geometry:
         lr: 0.01
       texture:
         lr: 0.01

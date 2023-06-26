@@ -4,23 +4,24 @@ seed: 42
 
 dataset:
   name: blender
-  scene: chair
-  root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/${dataset.scene}
-  img_wh:
-    - 800
-    - 800
-  # img_downscale: 1 # specify training image size by either img_wh or img_downscale
+  scene: scene_6
+  #root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/
+  root_dir: /gris/gris-f/homestud/ajamili/datasets/TS/${dataset.scene}
+  #w: 1920
+  #h: 1080
+  img_downscale: 1 # specify training image size by either img_wh or img_downscale
   near_plane: 2.0
   far_plane: 6.0
   train_split: "train"
   val_split: "val"
   test_split: "test"
+  apply_mask: false
 
 model:
   name: neus
-  radius: 1.5
+  radius: 2
   num_samples_per_ray: 1024
-  train_num_rays: 256
+  train_num_rays: 1024
   max_train_num_rays: 8192
   grid_prune: true
   grid_prune_occ_thre: 0.001
@@ -28,7 +29,7 @@ model:
   batch_image_sampling: true
   randomized: true
   ray_chunk: 4096
-  cos_anneal_end: 20000
+  cos_anneal_end: 10000
   learned_background: false
   background_color: random
   variance:
@@ -78,10 +79,10 @@ model:
 system:
   name: neus-system
   loss:
-    lambda_rgb_mse: 10.
-    lambda_rgb_l1: 0.
-    lambda_mask: 0.1
-    lambda_eikonal: 0.1
+    lambda_rgb_mse: 1.
+    lambda_rgb_l1: 0.5
+    lambda_mask: 0.0
+    lambda_eikonal: 0.15
     lambda_curvature: 0.
     lambda_sparsity: 0.0
     lambda_distortion: 0.
@@ -125,10 +126,10 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 20000
+  max_steps: 10000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
-  val_check_interval: 10000
+  val_check_interval: 5000
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true
