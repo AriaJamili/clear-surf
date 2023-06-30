@@ -36,6 +36,37 @@ class VolumeRadiance(nn.Module):
         return {}
 
 
+@models.register('volume-radiance-enc')
+class VolumeRadianceEnc(nn.Module):
+    def __init__(self, config):
+        super(VolumeRadianceEnc, self).__init__()
+        self.config = config
+        self.n_dir_dims = self.config.get('n_dir_dims', 3)
+        self.n_x_dims = self.config.get('n_x_dims', 3)
+        self.n_output_dims = 3
+        self.encoding_v = get_encoding(self.n_dir_dims, self.config.dir_encoding_config)
+        self.encoding_x = get_encoding(self.n_dir_dims, self.config.dir_encoding_config)
+        self.n_input_dims = self.config.input_feature_dim + self.encoding_v.n_output_dims + self.encoding_x.n_output_dims
+        network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config)    
+        self.network = network
+    
+    def forward(self, features, dirs, pos, *args):
+        dirs = (dirs + 1.) / 2. # (-1, 1) => (0, 1)
+        dirs_embd = self.encoding_v(dirs.view(-1, self.n_dir_dims))
+        x_embd = self.encoding_x(pos.view(-1, self.n_x_dims))
+        network_inp = torch.cat([features.view(-1, features.shape[-1]), dirs_embd, x_embd] + [arg.view(-1, arg.shape[-1]) for arg in args], dim=-1)
+        color = self.network(network_inp).view(*features.shape[:-1], self.n_output_dims).float()
+        if 'color_activation' in self.config:
+            color = get_activation(self.config.color_activation)(color)
+        return color
+
+    def update_step(self, epoch, global_step):
+        update_module_step(self.encoding_v, epoch, global_step)
+        update_module_step(self.encoding_x, epoch, global_step)
+
+    def regularizations(self, out):
+        return {}
+
 @models.register('volume-color')
 class VolumeColor(nn.Module):
     def __init__(self, config):

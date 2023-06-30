@@ -3,6 +3,7 @@ import argparse
 import os
 import time
 import logging
+import torch
 from datetime import datetime
 
 
@@ -34,6 +35,9 @@ def main():
     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     n_gpus = len(args.gpu.split(','))
+
+    #torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision('medium')
 
     import datasets
     import systems
