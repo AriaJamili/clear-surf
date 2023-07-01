@@ -21,7 +21,7 @@ model:
   dynamic_ray_sampling: true
   batch_image_sampling: true
   randomized: true
-  ray_chunk: 2048
+  ray_chunk: 4096
   cos_anneal_end: 5000
   learned_background: true
   background_color: random
@@ -51,13 +51,14 @@ model:
       activation: ReLU
       output_activation: none
       n_neurons: 64
-      n_hidden_layers: 1
+      n_hidden_layers: 2
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
   geometry_nerf:
-    name: volume-density
+    name: volume-sdf-density
     radius: ${model.radius}
+    input_feature_dim: ${sub:${model.geometry_neus.feature_dim},1}
     feature_dim: 16
     density_activation: trunc_exp
     density_bias: -1
@@ -81,8 +82,7 @@ model:
       n_hidden_layers: 1
   texture:
     name: volume-radiance-enc
-    last: ${add:${model.geometry_nerf.feature_dim},${model.geometry_neus.feature_dim}}
-    input_feature_dim: ${add:${model.texture.last},1} # surface normal as additional input
+    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},2} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
@@ -150,7 +150,9 @@ system:
       betas: [0.9, 0.99]
       eps: 1.e-15
     params:
-      geometry:
+      geometry_neus:
+        lr: 0.01
+      geometry_nerf:
         lr: 0.01
       texture:
         lr: 0.01
@@ -187,7 +189,7 @@ trainer:
   max_steps: 5000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
-  val_check_interval: 1000
+  val_check_interval: 500
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true

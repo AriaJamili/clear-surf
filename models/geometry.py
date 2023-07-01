@@ -485,9 +485,11 @@ class VolumeEnc(BaseImplicitGeometry):
 @models.register('volume-enc-sdf')
 class VolumeEncSDF(BaseImplicitGeometry):
     def setup(self):
-        self.n_input_dims = self.config.get('n_input_dims', 35)
+        n_input_dims = self.config.get('n_input_dims', 32)
+        self.encoding = get_encoding(3, self.config.xyz_encoding_config)
+        self.input_feature_dim = n_input_dims + self.encoding.n_output_dims
         self.n_output_dims = self.config.feature_dim
-        self.network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config) 
+        self.network = get_mlp(self.input_feature_dim, self.n_output_dims, self.config.mlp_network_config) 
         self.grad_type = self.config.grad_type
         self.finite_difference_eps = self.config.get('finite_difference_eps', 1e-3)
         # the actual value used in training
@@ -505,6 +507,7 @@ class VolumeEncSDF(BaseImplicitGeometry):
                     points.requires_grad_(True)
                 points_ = points # points in the original scale
                 points = contract_to_unisphere(points, self.radius, self.contraction_type) # points normalized to (0, 1)
+                points = self.encoding(points.view(-1, 3))
                 network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
                 out = self.network(network_inp).view(*points.shape[:-1], self.n_output_dims).float()
                 sdf, feature = out[...,0], out[...,1:]
@@ -541,6 +544,7 @@ class VolumeEncSDF(BaseImplicitGeometry):
     
     def forward_level(self, points, features):
         points = contract_to_unisphere(points, self.radius, self.contraction_type) # points normalized to (0, 1)
+        points = self.encoding(points.view(-1, 3))
         network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
         sdf = self.network(network_inp).view(*points.shape[:-1], self.n_output_dims)[...,0]
         if 'sdf_activation' in self.config:
@@ -548,6 +552,7 @@ class VolumeEncSDF(BaseImplicitGeometry):
         return sdf        
     
     def update_step(self, epoch, global_step):
+        update_module_step(self.encoding, epoch, global_step)  
         update_module_step(self.network, epoch, global_step)  
         if self.grad_type == 'finite_difference':
             if isinstance(self.finite_difference_eps, float):
@@ -570,12 +575,15 @@ class VolumeEncSDF(BaseImplicitGeometry):
 @models.register('volume-enc-density')
 class VolumeEncDensity(BaseImplicitGeometry):
     def setup(self):
-        self.n_input_dims = self.config.get('n_input_dims', 35)
+        n_input_dims = self.config.get('n_input_dims', 32)
+        self.encoding = get_encoding(3, self.config.xyz_encoding_config)
+        self.input_feature_dim = n_input_dims + self.encoding.n_output_dims
         self.n_output_dims = self.config.feature_dim
-        self.network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config) 
+        self.network = get_mlp(self.input_feature_dim, self.n_output_dims, self.config.mlp_network_config) 
     
     def forward(self, points, features):
         points = contract_to_unisphere(points, self.radius, self.contraction_type) # points normalized to (0, 1)
+        points = self.encoding(points.view(-1, 3))
         network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
         out = self.network(network_inp).view(*features.shape[:-1], self.n_output_dims).float()
         density, feature = out[...,0], out[...,1:]
@@ -594,6 +602,7 @@ class VolumeEncDensity(BaseImplicitGeometry):
         return -density      
     
     def update_step(self, epoch, global_step):
+        update_module_step(self.encoding, epoch, global_step)
         update_module_step(self.network, epoch, global_step)
 
 @models.register('volume-cost')

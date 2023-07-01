@@ -28,109 +28,61 @@ model:
   variance:
     init_val: 0.3
     modulate: false
-  geometry:
-    name: volume
+  geometry_neus:
+    name: volume-sdf
     radius: ${model.radius}
-    feature_dim: ${model.geometry.geometry_cost.feature_dim}
+    feature_dim: 16
+    grad_type: analytic
     isosurface:
       method: mc
       resolution: 512
       chunk: 2097152
       threshold: 0.
-    geometry_enc:
-      name: volume-enc
-      radius: ${model.radius}
-      feature_dim: 32
-      density_activation: trunc_exp
-      isosurface:
-        method: mc
-        resolution: 256
-        chunk: 2097152
-        threshold: 5.0
-      xyz_encoding_config:
-        otype: HashGrid
-        n_levels: 16
-        n_features_per_level: 2
-        log2_hashmap_size: 19
-        base_resolution: 16
-        per_level_scale: 1.447269237440378  
-      mlp_network_config:
-        otype: FullyFusedMLP
-        activation: ReLU
-        output_activation: ReLU
-        n_neurons: 32
-        n_hidden_layers: 1
-    geometry_neus:
-      name: volume-enc-sdf
-      radius: ${model.radius}
-      n_input_dims: ${add:${model.geometry.geometry_enc.feature_dim},3}  
-      feature_dim: 16
-      grad_type: analytic
-      feature_activation: ReLU
-      isosurface:
-        method: mc
-        resolution: 512
-        chunk: 2097152
-        threshold: 0.
-      mlp_network_config:
-        otype: VanillaMLP
-        activation: ReLU
-        output_activation: none
-        n_neurons: 64
-        n_hidden_layers: 1
-        sphere_init: true
-        sphere_init_radius: 0.5
-        weight_norm: true
-    geometry_nerf:
-      name: volume-enc-density
-      radius: ${model.radius}
-      n_input_dims: ${add:${model.geometry.geometry_enc.feature_dim},3}  
-      feature_dim: 16
-      density_activation: trunc_exp
-      density_bias: -1
-      feature_activation: ReLU
-      isosurface:
-        method: mc
-        resolution: 256
-        chunk: 2097152
-        threshold: 5.0
-      xyz_encoding_config:
-        otype: HashGrid
-        n_levels: 16
-        n_features_per_level: 2
-        log2_hashmap_size: 19
-        base_resolution: 16
-        per_level_scale: 1.447269237440378  
-      mlp_network_config:
-        otype: FullyFusedMLP
-        activation: ReLU
-        output_activation: none
-        n_neurons: 64
-        n_hidden_layers: 1
-    geometry_cost:
-      name: volume-cost
-      radius: ${model.radius}
-      last_dim: ${add:${model.geometry.geometry_neus.feature_dim},${model.geometry.geometry_nerf.feature_dim}}
-      n_input_dims: ${sub:${model.geometry.geometry_cost.last_dim},2} # remove sdf , density
-      feature_dim: 15
-      grad_type: analytic
-      isosurface:
-        method: mc
-        resolution: 512
-        chunk: 2097152
-        threshold: 0.
-      mlp_network_config:
-        otype: VanillaMLP
-        activation: ReLU
-        output_activation: ReLU
-        n_neurons: 64
-        n_hidden_layers: 1
-        sphere_init: true
-        sphere_init_radius: 0.5
-        weight_norm: true  
+    xyz_encoding_config:
+      otype: HashGrid
+      n_levels: 16
+      n_features_per_level: 2
+      log2_hashmap_size: 19
+      base_resolution: 32
+      per_level_scale: 1.3195079107728942
+      include_xyz: true
+    mlp_network_config:
+      otype: VanillaMLP
+      activation: ReLU
+      output_activation: none
+      n_neurons: 64
+      n_hidden_layers: 1
+      sphere_init: true
+      sphere_init_radius: 0.5
+      weight_norm: true
+  geometry_nerf:
+    name: volume-density
+    radius: ${model.radius}
+    feature_dim: 16
+    density_activation: trunc_exp
+    density_bias: -1
+    isosurface:
+      method: mc
+      resolution: 256
+      chunk: 2097152
+      threshold: 5.0
+    xyz_encoding_config:
+      otype: HashGrid
+      n_levels: 16
+      n_features_per_level: 2
+      log2_hashmap_size: 19
+      base_resolution: 16
+      per_level_scale: 1.447269237440378
+    mlp_network_config:
+      otype: FullyFusedMLP
+      activation: ReLU
+      output_activation: none
+      n_neurons: 64
+      n_hidden_layers: 1
   texture:
     name: volume-radiance-enc
-    input_feature_dim: ${add:${model.geometry.feature_dim},3} # surface normal as additional input
+    last: ${add:${model.geometry_nerf.feature_dim},${model.geometry_neus.feature_dim}}
+    input_feature_dim: ${add:${model.texture.last},1} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
@@ -141,7 +93,6 @@ model:
       n_neurons: 64
       n_hidden_layers: 2
     color_activation: sigmoid
-  # background model configurations
   num_samples_per_ray_bg: 64
   geometry_bg:
     name: volume-density
@@ -177,6 +128,8 @@ model:
       n_hidden_layers: 2
     color_activation: sigmoid
 
+  
+
 system:
   name: neus-system
   loss:
@@ -197,7 +150,9 @@ system:
       betas: [0.9, 0.99]
       eps: 1.e-15
     params:
-      geometry:
+      geometry_neus:
+        lr: 0.01
+      geometry_nerf:
         lr: 0.01
       texture:
         lr: 0.01
@@ -234,7 +189,7 @@ trainer:
   max_steps: 5000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
-  val_check_interval: 1000
+  val_check_interval: 500
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true
