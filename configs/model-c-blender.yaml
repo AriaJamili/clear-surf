@@ -1,4 +1,4 @@
-name: Model-C-blender-${dataset.scene}
+name: Model-D-blender-${dataset.scene}
 tag: ""
 seed: 42
 
@@ -18,7 +18,7 @@ dataset:
   apply_mask: false
 
 model:
-  name: Model-C
+  name: Model-D
   radius: 2.0
   num_samples_per_ray: 1024
   train_num_rays: 1024
@@ -28,7 +28,7 @@ model:
   dynamic_ray_sampling: true
   batch_image_sampling: true
   randomized: true
-  ray_chunk: 4096
+  ray_chunk: 2048
   cos_anneal_end: 10000
   learned_background: true
   background_color: random
@@ -58,14 +58,13 @@ model:
       activation: ReLU
       output_activation: none
       n_neurons: 64
-      n_hidden_layers: 2
+      n_hidden_layers: 1
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
   geometry_nerf:
-    name: volume-sdf-density
+    name: volume-density
     radius: ${model.radius}
-    input_feature_dim: ${sub:${model.geometry_neus.feature_dim},1}
     feature_dim: 16
     density_activation: trunc_exp
     density_bias: -1
@@ -89,7 +88,8 @@ model:
       n_hidden_layers: 1
   texture:
     name: volume-radiance-enc
-    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},2} # surface normal as additional input
+    last: ${add:${model.geometry_nerf.feature_dim},${model.geometry_neus.feature_dim}}
+    input_feature_dim: ${add:${model.texture.last},1} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    

@@ -45,7 +45,7 @@ class VolumeRadianceEnc(nn.Module):
         self.n_x_dims = self.config.get('n_x_dims', 3)
         self.n_output_dims = 3
         self.encoding_v = get_encoding(self.n_dir_dims, self.config.dir_encoding_config)
-        self.encoding_x = get_encoding(self.n_dir_dims, self.config.dir_encoding_config)
+        self.encoding_x = get_encoding(self.n_dir_dims, self.config.xyz_encoding_config)
         self.n_input_dims = self.config.input_feature_dim + self.encoding_v.n_output_dims + self.encoding_x.n_output_dims
         network = get_mlp(self.n_input_dims, self.n_output_dims, self.config.mlp_network_config)    
         self.network = network

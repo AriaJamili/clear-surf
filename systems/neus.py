@@ -95,30 +95,49 @@ class NeuSSystem(BaseSystem):
             train_num_rays = int(self.train_num_rays * (self.train_num_samples / out['num_samples_full'].sum().item()))        
             self.train_num_rays = min(int(self.train_num_rays * 0.9 + train_num_rays * 0.1), self.config.model.max_train_num_rays)
 
-        loss_rgb_mse = F.mse_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
-        self.log('train/loss_rgb_mse', loss_rgb_mse)
-        loss += loss_rgb_mse * self.C(self.config.system.loss.lambda_rgb_mse)
+        alpha = self.C(self.config.system.loss.lambda_rgb_mse)
+        if alpha > 0:
+            loss_rgb_mse = F.mse_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
+            self.log('train/loss_rgb_mse', loss_rgb_mse)
+            loss += loss_rgb_mse * alpha
 
-        loss_rgb_l1 = F.l1_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
-        self.log('train/loss_rgb', loss_rgb_l1)
-        loss += loss_rgb_l1 * self.C(self.config.system.loss.lambda_rgb_l1)        
+        alpha = self.C(self.config.system.loss.lambda_rgb_l1)
+        if alpha > 0:
+            loss_rgb_l1 = F.l1_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
+            self.log('train/loss_rgb_l1', loss_rgb_l1)
+            loss += loss_rgb_l1 * alpha      
 
-        loss_eikonal = ((torch.linalg.norm(out['sdf_grad_samples'], ord=2, dim=-1) - 1.)**2).mean()
-        self.log('train/loss_eikonal', loss_eikonal)
-        loss += loss_eikonal * self.C(self.config.system.loss.lambda_eikonal)
+        #alpha = self.C(self.config.system.loss.lambda_rgb_huber)
+        #if alpha > 0:
+        #    lambda_rgb_huber = F.huber_loss(out['comp_rgb_full'][out['rays_valid_full'][...,0]], batch['rgb'][out['rays_valid_full'][...,0]])
+        #    self.log('train/lambda_rgb_huber', lambda_rgb_huber)
+        #    loss += lambda_rgb_huber * alpha  
+
+        alpha = self.C(self.config.system.loss.lambda_eikonal)
+        if alpha > 0:
+            loss_eikonal = ((torch.linalg.norm(out['sdf_grad_samples'], ord=2, dim=-1) - 1.)**2).mean()
+            self.log('train/loss_eikonal', loss_eikonal)
+            loss += loss_eikonal * alpha
         
-        opacity = torch.clamp(out['opacity'].squeeze(-1), 1.e-3, 1.-1.e-3)
-        loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float())
-        self.log('train/loss_mask', loss_mask)
-        loss += loss_mask * (self.C(self.config.system.loss.lambda_mask) if self.dataset.has_mask else 0.0)
+        alpha = (self.C(self.config.system.loss.lambda_mask) if self.dataset.has_mask else 0.0)
+        if alpha > 0:
+            opacity = torch.clamp(out['opacity'].squeeze(-1), 1.e-3, 1.-1.e-3)
+            loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float())
+            self.log('train/loss_mask', loss_mask)
+            loss += loss_mask * alpha
 
-        loss_opaque = binary_cross_entropy(opacity, opacity)
-        self.log('train/loss_opaque', loss_opaque)
-        loss += loss_opaque * self.C(self.config.system.loss.lambda_opaque)
 
-        loss_sparsity = torch.exp(-self.config.system.loss.sparsity_scale * out['sdf_samples'].abs()).mean()
-        self.log('train/loss_sparsity', loss_sparsity)
-        loss += loss_sparsity * self.C(self.config.system.loss.lambda_sparsity)
+        alpha = self.C(self.config.system.loss.lambda_opaque)
+        if alpha > 0:
+            loss_opaque = binary_cross_entropy(opacity, opacity)
+            self.log('train/loss_opaque', loss_opaque)
+            loss += loss_opaque * alpha
+
+        alpha = self.C(self.config.system.loss.lambda_sparsity)
+        if alpha > 0:
+            loss_sparsity = torch.exp(-self.config.system.loss.sparsity_scale * out['sdf_samples'].abs()).mean()
+            self.log('train/loss_sparsity', loss_sparsity)
+            loss += loss_sparsity * alpha
 
         if self.C(self.config.system.loss.lambda_curvature) > 0:
             assert 'sdf_laplace_samples' in out, "Need geometry.grad_type='finite_difference' to get SDF Laplace samples"
@@ -172,7 +191,7 @@ class NeuSSystem(BaseSystem):
         out = self(batch)
         psnr = self.criterions['psnr'](out['comp_rgb_full'].to(batch['rgb']), batch['rgb'])
         W, H = self.dataset.img_wh
-        self.save_image_grid(f"it{self.global_step}-{batch['index'][0].item()}.png", [
+        self.save_image_grid(f"{self.config.name}-it{self.global_step}-{batch['index'][0].item()}.png", [
             {'type': 'rgb', 'img': batch['rgb'].view(H, W, 3), 'kwargs': {'data_format': 'HWC'}},
             {'type': 'rgb', 'img': out['comp_rgb_full'].view(H, W, 3), 'kwargs': {'data_format': 'HWC'}}
         ] + ([
@@ -213,7 +232,7 @@ class NeuSSystem(BaseSystem):
         out = self(batch)
         psnr = self.criterions['psnr'](out['comp_rgb_full'].to(batch['rgb']), batch['rgb'])
         W, H = self.dataset.img_wh
-        self.save_image_grid(f"it{self.global_step}-test/{batch['index'][0].item()}.png", [
+        self.save_image_grid(f"{self.config.name}-it{self.global_step}-test/{batch['index'][0].item()}.png", [
             {'type': 'rgb', 'img': batch['rgb'].view(H, W, 3), 'kwargs': {'data_format': 'HWC'}},
             {'type': 'rgb', 'img': out['comp_rgb_full'].view(H, W, 3), 'kwargs': {'data_format': 'HWC'}}
         ] + ([
@@ -247,19 +266,19 @@ class NeuSSystem(BaseSystem):
             psnr = torch.mean(torch.stack([o['psnr'] for o in out_set.values()]))
             self.log('test/psnr', psnr, prog_bar=True, rank_zero_only=True)    
 
-            self.save_img_sequence(
-                f"it{self.global_step}-test",
-                f"it{self.global_step}-test",
-                '(\d+)\.png',
-                save_format='mp4',
-                fps=30
-            )
+            #self.save_img_sequence(
+            #    f"{self.config.name}-it{self.global_step}-test",
+            #    f"{self.config.name}-it{self.global_step}-test",
+            #    '(\d+)\.png',
+            #    save_format='mp4',
+            #    fps=30
+            #)
             
             self.export()
     
     def export(self):
         mesh = self.model.export(self.config.export)
         self.save_mesh(
-            f"it{self.global_step}-{self.config.model.geometry.isosurface.method}{self.config.model.geometry.isosurface.resolution}.obj",
+            f"{self.config.name}-it{self.global_step}-{self.config.model.geometry.isosurface.method}{self.config.model.geometry.isosurface.resolution}.obj",
             **mesh
         )        
