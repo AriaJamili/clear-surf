@@ -3,6 +3,7 @@ import json
 import math
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
@@ -15,14 +16,14 @@ from models.ray_utils import get_ray_directions
 from utils.misc import get_rank
 
 
-class BlenderDatasetBase():
+class BlenderTNSDatasetBase():
     def setup(self, config, split):
         self.config = config
         self.split = split
         self.rank = get_rank()
 
         self.has_mask = True
-        self.apply_mask = True
+        self.apply_mask = self.config.apply_mask
 
         with open(os.path.join(self.config.root_dir, f"transforms_{self.split}.json"), 'r') as f:
             meta = json.load(f)
@@ -30,48 +31,46 @@ class BlenderDatasetBase():
         if 'w' in meta and 'h' in meta:
             W, H = int(meta['w']), int(meta['h'])
         else:
-            W, H = 800, 800
-
-        if 'img_wh' in self.config:
-            w, h = self.config.img_wh
-            assert round(W / w * h) == H
-        elif 'img_downscale' in self.config:
-            w, h = W // self.config.img_downscale, H // self.config.img_downscale
-        else:
-            raise KeyError("Either img_wh or img_downscale should be specified.")
+            W, H = 1280, 720
         
-        self.w, self.h = w, h
+        self.w, self.h = W, H
         self.img_wh = (self.w, self.h)
 
-        self.near, self.far = self.config.near_plane, self.config.far_plane
+        #self.near, self.far = self.config.near_plane, self.config.far_plane
 
-        self.focal = 0.5 * w / math.tan(0.5 * meta['camera_angle_x']) # scaled focal length
+        self.focal = meta['fl_x']
+
+        self.apply_mask = self.config.apply_mask
 
         # ray directions for all pixels, same for all images (same H, W, focal)
         self.directions = \
-            get_ray_directions(self.w, self.h, self.focal, self.focal, self.w//2, self.h//2).to(self.rank) # (h, w, 3)           
+            get_ray_directions(self.w, self.h, meta['fl_x'], meta['fl_y'], meta['cx'], meta['cy']).to(self.rank) # (h, w, 3)           
 
-        self.all_c2w, self.all_images, self.all_fg_masks = [], [], []
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_trans_masks = [], [], [], []
 
-        for i, frame in enumerate(meta['frames']):
-            c2w = torch.from_numpy(np.array(frame['transform_matrix'])[:3, :4])
+        for frame in tqdm(meta["frames"], desc=f"Loading {split}", unit="scene"):
+            c2w = torch.from_numpy(np.array(frame['transform_matrix'], dtype=np.float32)[:3, :4])
             self.all_c2w.append(c2w)
-
-            img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}.png")
+            img_path = os.path.join(self.config.root_dir, f"{frame['file_path']}")
             img = Image.open(img_path)
             img = img.resize(self.img_wh, Image.BICUBIC)
             img = TF.to_tensor(img).permute(1, 2, 0) # (4, h, w) => (h, w, 4)
 
-            self.all_fg_masks.append(img[..., -1]) # (h, w)
+            mask_fg_path = os.path.join(self.config.root_dir, f"{frame['file_fg_segmap_path']}")
+            mask_trans_path = os.path.join(self.config.root_dir, f"{frame['file_trans_segmap_path']}")
+
+            self.all_trans_masks.append(torch.from_numpy(np.load(mask_trans_path)))
+            self.all_fg_masks.append(torch.from_numpy(np.load(mask_fg_path)))
             self.all_images.append(img[...,:3])
 
-        self.all_c2w, self.all_images, self.all_fg_masks = \
+        self.all_c2w, self.all_images, self.all_fg_masks, self.all_trans_masks = \
             torch.stack(self.all_c2w, dim=0).float().to(self.rank), \
             torch.stack(self.all_images, dim=0).float().to(self.rank), \
-            torch.stack(self.all_fg_masks, dim=0).float().to(self.rank)
+            torch.stack(self.all_fg_masks, dim=0).float().to(self.rank), \
+            torch.stack(self.all_trans_masks, dim=0).float().to(self.rank)
         
 
-class BlenderDataset(Dataset, BlenderDatasetBase):
+class BlenderTNSDataset(Dataset, BlenderTNSDatasetBase):
     def __init__(self, config, split):
         self.setup(config, split)
 
@@ -84,7 +83,7 @@ class BlenderDataset(Dataset, BlenderDatasetBase):
         }
 
 
-class BlenderIterableDataset(IterableDataset, BlenderDatasetBase):
+class BlenderTNSIterableDataset(IterableDataset, BlenderTNSDatasetBase):
     def __init__(self, config, split):
         self.setup(config, split)
 
@@ -93,21 +92,21 @@ class BlenderIterableDataset(IterableDataset, BlenderDatasetBase):
             yield {}
 
 
-@datasets.register('blender')
-class BlenderDataModule(pl.LightningDataModule):
+@datasets.register('blender-tns')
+class BlenderTNSDataModule(pl.LightningDataModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
     
     def setup(self, stage=None):
         if stage in [None, 'fit']:
-            self.train_dataset = BlenderIterableDataset(self.config, self.config.train_split)
+            self.train_dataset = BlenderTNSIterableDataset(self.config, self.config.train_split)
         if stage in [None, 'fit', 'validate']:
-            self.val_dataset = BlenderDataset(self.config, self.config.val_split)
+            self.val_dataset = BlenderTNSDataset(self.config, self.config.val_split)
         if stage in [None, 'test']:
-            self.test_dataset = BlenderDataset(self.config, self.config.test_split)
+            self.test_dataset = BlenderTNSDataset(self.config, self.config.test_split)
         if stage in [None, 'predict']:
-            self.predict_dataset = BlenderDataset(self.config, self.config.train_split)
+            self.predict_dataset = BlenderTNSDataset(self.config, self.config.train_split)
 
     def prepare_data(self):
         pass

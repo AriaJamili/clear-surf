@@ -14,8 +14,8 @@ from systems.base import BaseSystem
 from systems.criterions import PSNR, binary_cross_entropy
 
 
-@systems.register('neus-system')
-class NeuSSystem(BaseSystem):
+@systems.register('tns-system')
+class TNSSystem(BaseSystem):
     """
     Two ways to print to console:
     1. self.print: correctly handle progress bar
@@ -54,6 +54,7 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index, y, x].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index, y, x].view(-1).to(self.rank)
+            trans_mask = self.dataset.all_trans_masks[index, y, x].view(-1).to(self.rank)
         else:
             c2w = self.dataset.all_c2w[index][0]
             if self.dataset.directions.ndim == 3: # (H, W, 3)
@@ -63,6 +64,7 @@ class NeuSSystem(BaseSystem):
             rays_o, rays_d = get_rays(directions, c2w)
             rgb = self.dataset.all_images[index].view(-1, self.dataset.all_images.shape[-1]).to(self.rank)
             fg_mask = self.dataset.all_fg_masks[index].view(-1).to(self.rank)
+            trans_mask = self.dataset.all_trans_masks[index].view(-1).to(self.rank)
 
         rays = torch.cat([rays_o, F.normalize(rays_d, p=2, dim=-1)], dim=-1)
 
@@ -82,7 +84,8 @@ class NeuSSystem(BaseSystem):
         batch.update({
             'rays': rays,
             'rgb': rgb,
-            'fg_mask': fg_mask
+            'fg_mask': fg_mask,
+            'trans_mask': trans_mask
         })      
     
     def training_step(self, batch, batch_idx):
@@ -120,10 +123,16 @@ class NeuSSystem(BaseSystem):
             loss += loss_eikonal * alpha
         
         alpha = (self.C(self.config.system.loss.lambda_mask) if self.dataset.has_mask else 0.0)
+        opacity = torch.clamp(out['opacity'].squeeze(-1), 1.e-3, 1.-1.e-3)
         if alpha > 0:
-            opacity = torch.clamp(out['opacity'].squeeze(-1), 1.e-3, 1.-1.e-3)
             loss_mask = binary_cross_entropy(opacity, batch['fg_mask'].float())
             self.log('train/loss_mask', loss_mask)
+            loss += loss_mask * alpha
+
+        alpha = (self.C(self.config.system.loss.lambda_trans_mask) if self.dataset.has_mask else 0.0)
+        if alpha > 0:
+            loss_mask = binary_cross_entropy(opacity, batch['trans_mask'].float())
+            self.log('train/loss_trans_mask', loss_mask)
             loss += loss_mask * alpha
 
 

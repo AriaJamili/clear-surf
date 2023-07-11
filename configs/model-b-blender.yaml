@@ -1,16 +1,16 @@
-name: Model-C-blender-${dataset.scene}
+name: Model-B-TNS-${dataset.scene}
 tag: ""
 seed: 42
 
 dataset:
   name: blender
-  scene: scene_9
+  scene: scene_1
   #root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/
   root_dir: /gris/gris-f/homestud/ajamili/datasets/TS/${dataset.scene}
   #w: 1920
   #h: 1080
-  img_downscale: 1 # specify training image size by either img_wh or img_downscale
-  near_plane: 2.0
+  img_downscale: 2 # specify training image size by either img_wh or img_downscale
+  near_plane: 1.0
   far_plane: 6.0
   train_split: "train"
   val_split: "val"
@@ -18,10 +18,10 @@ dataset:
   apply_mask: false
 
 model:
-  name: Model-C
-  radius: 2.0
+  name: Model-B
+  radius: 1.0
   num_samples_per_ray: 1024
-  train_num_rays: 1024
+  train_num_rays: 2048
   max_train_num_rays: 8192
   grid_prune: true
   grid_prune_occ_thre: 0.001
@@ -35,6 +35,12 @@ model:
   variance:
     init_val: 0.3
     modulate: false
+  geometry:
+    isosurface:
+      method: mc
+      resolution: 512
+      chunk: 2097152
+      threshold: 0.
   geometry_neus:
     name: volume-sdf
     radius: ${model.radius}
@@ -58,14 +64,14 @@ model:
       activation: ReLU
       output_activation: none
       n_neurons: 64
-      n_hidden_layers: 2
+      n_hidden_layers: 1
       sphere_init: true
       sphere_init_radius: 0.5
       weight_norm: true
   geometry_nerf:
     name: volume-sdf-density
     radius: ${model.radius}
-    input_feature_dim: ${sub:${model.geometry_neus.feature_dim},1}
+    input_feature_dim: ${model.geometry_neus.feature_dim}
     feature_dim: 16
     density_activation: trunc_exp
     density_bias: -1
@@ -89,10 +95,18 @@ model:
       n_hidden_layers: 1
   texture:
     name: volume-radiance-enc
-    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},2} # surface normal as additional input
+    input_feature_dim: ${add:${model.geometry_nerf.feature_dim},3} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
+    xyz_encoding_config:
+      otype: HashGrid
+      n_levels: 16
+      n_features_per_level: 2
+      log2_hashmap_size: 19
+      base_resolution: 32
+      per_level_scale: 1.3195079107728942
+      include_xyz: true
     mlp_network_config:
       otype: FullyFusedMLP
       activation: ReLU
@@ -123,7 +137,7 @@ model:
       n_hidden_layers: 1
   texture_bg:
     name: volume-radiance
-    input_feature_dim: ${sub:${model.geometry_bg.feature_dim},1}
+    input_feature_dim: ${model.geometry_bg.feature_dim}
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4
@@ -140,7 +154,7 @@ model:
 system:
   name: neus-system
   loss:
-    lambda_rgb_mse: 0.
+    lambda_rgb_mse: 0.5
     lambda_rgb_l1: 1.
     lambda_mask: 0.0
     lambda_eikonal: 0.1
@@ -169,7 +183,7 @@ system:
         lr: 0.01
       variance:
         lr: 0.001
-  constant_steps: 4000
+  constant_steps: 2500
   scheduler:
     name: SequentialLR
     interval: step
@@ -196,7 +210,7 @@ trainer:
   max_steps: 10000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
-  val_check_interval: 2500
+  val_check_interval: 5000
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true

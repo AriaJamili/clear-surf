@@ -122,7 +122,7 @@ class VolumeDensity(BaseImplicitGeometry):
     def forward(self, points):
         points = contract_to_unisphere(points, self.radius, self.contraction_type)
         out = self.encoding_with_network(points.view(-1, self.n_input_dims)).view(*points.shape[:-1], self.n_output_dims).float()
-        density, feature = out[...,0], out[...,1:]
+        density, feature = out[...,0], out
         if 'density_activation' in self.config:
             density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
         if 'feature_activation' in self.config:
@@ -166,7 +166,7 @@ class VolumeSDF(BaseImplicitGeometry):
                 points = contract_to_unisphere(points, self.radius, self.contraction_type) # points normalized to (0, 1)
                 
                 out = self.network(self.encoding(points.view(-1, 3))).view(*points.shape[:-1], self.n_output_dims).float()
-                sdf, feature = out[...,0], out[...,1:]
+                sdf, feature = out[...,0], out
                 if 'sdf_activation' in self.config:
                     sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
                 if 'feature_activation' in self.config:
@@ -250,7 +250,7 @@ class VolumeDensity(BaseImplicitGeometry):
         points = self.encoding(points.view(-1, 3))
         network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
         out = self.network(network_inp).view(*points.shape[:-1], self.n_output_dims).float()
-        density, feature = out[...,0], out[...,1:]
+        density, feature = out[...,0], out
         if 'density_activation' in self.config:
             density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
         if 'feature_activation' in self.config:
@@ -296,9 +296,11 @@ class VolumeSDF(BaseImplicitGeometry):
                 points = contract_to_unisphere(points, self.radius, self.contraction_type) # points normalized to (0, 1)
                 
                 out = self.network(self.encoding(points.view(-1, 3))).view(*points.shape[:-1], self.n_output_dims).float()
-                sdf, density, feature = out[...,0],  out[...,1], out[...,2:]
+                sdf, density, feature = out[...,0],  out[...,1], out
                 if 'sdf_activation' in self.config:
                     sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
+                if 'density_activation' in self.config:
+                    density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
                 if 'feature_activation' in self.config:
                     feature = get_activation(self.config.feature_activation)(feature)               
                 if with_grad:
@@ -394,7 +396,7 @@ class VolumeNerFSDF(BaseImplicitGeometry):
                 points = self.encoding(points.view(-1, 3))
                 network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
                 out = self.network(network_inp).view(*points.shape[:-1], self.n_output_dims).float()
-                sdf, feature = out[...,0], out[...,1:]
+                sdf, feature = out[...,0], out
                 if 'sdf_activation' in self.config:
                     sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
                 if 'feature_activation' in self.config:
@@ -510,7 +512,7 @@ class VolumeEncSDF(BaseImplicitGeometry):
                 points = self.encoding(points.view(-1, 3))
                 network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
                 out = self.network(network_inp).view(*points.shape[:-1], self.n_output_dims).float()
-                sdf, feature = out[...,0], out[...,1:]
+                sdf, feature = out[...,0], out
                 if 'sdf_activation' in self.config:
                     sdf = get_activation(self.config.sdf_activation)(sdf + float(self.config.sdf_bias))
                 if 'feature_activation' in self.config:
@@ -586,7 +588,7 @@ class VolumeEncDensity(BaseImplicitGeometry):
         points = self.encoding(points.view(-1, 3))
         network_inp = torch.cat([features.view(-1, features.shape[-1]), points.view(-1, points.shape[-1])], dim=-1)
         out = self.network(network_inp).view(*features.shape[:-1], self.n_output_dims).float()
-        density, feature = out[...,0], out[...,1:]
+        density, feature = out[...,0], out
         if 'density_activation' in self.config:
             density = get_activation(self.config.density_activation)(density + float(self.config.density_bias))
         if 'feature_activation' in self.config:

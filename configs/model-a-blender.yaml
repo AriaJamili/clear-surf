@@ -1,15 +1,15 @@
-name: Model-A-blender-${dataset.scene}
+name: Model-A-TNS-${dataset.scene}
 tag: ""
 seed: 42
 
 dataset:
   name: blender
-  scene: scene_9
+  scene: scene_1
   #root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/
   root_dir: /gris/gris-f/homestud/ajamili/datasets/TS/${dataset.scene}
   #w: 1920
   #h: 1080
-  img_downscale: 1 # specify training image size by either img_wh or img_downscale
+  img_downscale: 2 # specify training image size by either img_wh or img_downscale
   near_plane: 1.0
   far_plane: 6.0
   train_split: "train"
@@ -19,7 +19,7 @@ dataset:
 
 model:
   name: Model-A
-  radius: 2.0
+  radius: 1.0
   num_samples_per_ray: 1024
   train_num_rays: 1024
   max_train_num_rays: 8192
@@ -64,10 +64,18 @@ model:
       weight_norm: true
   texture:
     name: volume-radiance-enc
-    input_feature_dim: ${add:${model.geometry.feature_dim},1} # surface normal as additional input
+    input_feature_dim: ${add:${model.geometry.feature_dim},3} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4
+    xyz_encoding_config:
+      otype: HashGrid
+      n_levels: 16
+      n_features_per_level: 2
+      log2_hashmap_size: 19
+      base_resolution: 32
+      per_level_scale: 1.3195079107728942
+      include_xyz: true
     mlp_network_config:
       otype: VanillaMLP
       activation: ReLU
@@ -99,7 +107,7 @@ model:
       n_hidden_layers: 1
   texture_bg:
     name: volume-radiance
-    input_feature_dim: ${sub:${model.geometry_bg.feature_dim},1}
+    input_feature_dim: ${model.geometry_bg.feature_dim}
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4
@@ -115,7 +123,7 @@ model:
 system:
   name: neus-system
   loss:
-    lambda_rgb_mse: 0.
+    lambda_rgb_mse: 0.5
     lambda_rgb_l1: 1.
     lambda_mask: 0.0
     lambda_eikonal: 0.1
@@ -142,7 +150,7 @@ system:
         lr: 0.01
       variance:
         lr: 0.001
-  constant_steps: 4000
+  constant_steps: 2500
   scheduler:
     name: SequentialLR
     interval: step
@@ -169,9 +177,8 @@ trainer:
   max_steps: 10000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
-  val_check_interval: 2500
+  val_check_interval: 5000
   limit_train_batches: 1.0
   limit_val_batches: 2
   enable_progress_bar: true
   precision: 16
-

@@ -78,9 +78,9 @@ def main():
                 **config.checkpoint
             ),
             LearningRateMonitor(logging_interval='step'),
-            CodeSnapshotCallback(
-                config.code_dir, use_version=False
-            ),
+            #CodeSnapshotCallback(
+            #    config.code_dir, use_version=False
+            #),
             ConfigSnapshotCallback(
                 config, config.config_dir, use_version=False
             ),

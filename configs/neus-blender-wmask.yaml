@@ -1,16 +1,17 @@
-name: INSR-TNS-${dataset.scene}
+name: INSR-TNS-wmask-${dataset.scene}
 tag: ""
 seed: 42
 
 dataset:
   name: blender-tns
   scene: scene_2
+  #root_dir: /gris/gris-f/homestud/ajamili/datasets/NERF/nerf_synthetic/
   root_dir: /gris/gris-f/homestud/ajamili/datasets/TS/${dataset.scene}
   img_downscale: 2
   train_split: "train"
   val_split: "val"
   test_split: "test"
-  apply_mask: false
+  apply_mask: true
 
 model:
   name: neus
@@ -25,7 +26,7 @@ model:
   randomized: true
   ray_chunk: 4096
   cos_anneal_end: 10000
-  learned_background: true
+  learned_background: false
   background_color: random
   variance:
     init_val: 0.3
@@ -131,10 +132,6 @@ system:
       geometry:
         lr: 0.01
       texture:
-        lr: 0.01
-      geometry_bg:
-        lr: 0.01
-      texture_bg:
         lr: 0.01
       variance:
         lr: 0.001

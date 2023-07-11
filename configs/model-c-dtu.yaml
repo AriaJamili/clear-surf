@@ -4,9 +4,9 @@ seed: 42
 
 dataset:
   name: dtu
-  scene: scan24
+  scene: dtu_scan24
   root_dir: /gris/gris-f/homestud/ajamili/datasets/DTU/${dataset.scene}
-  cameras_file: cameras.npz
+  cameras_file: cameras_sphere.npz
   img_downscale: 2 # specify training image size by either img_wh or img_downscale
   n_test_traj_steps: 60
   apply_mask: false
@@ -23,7 +23,7 @@ model:
   batch_image_sampling: true
   randomized: true
   ray_chunk: 2048
-  cos_anneal_end: 15000
+  cos_anneal_end: 20000
   learned_background: true
   background_color: random
   variance:
@@ -89,7 +89,7 @@ model:
   texture:
     name: volume-radiance-enc
     last: ${add:${model.geometry_nerf.feature_dim},${model.geometry_neus.feature_dim}}
-    input_feature_dim: ${add:${model.texture.last},1} # surface normal as additional input
+    input_feature_dim: ${add:${model.texture.last},3} # surface normal as additional input
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4    
@@ -131,7 +131,7 @@ model:
       n_hidden_layers: 1
   texture_bg:
     name: volume-radiance
-    input_feature_dim: ${sub:${model.geometry_bg.feature_dim},1}
+    input_feature_dim: ${model.geometry_bg.feature_dim}
     dir_encoding_config:
       otype: SphericalHarmonics
       degree: 4
@@ -201,7 +201,7 @@ export:
   export_vertex_color: True
 
 trainer:
-  max_steps: 15000
+  max_steps: 20000
   log_every_n_steps: 100
   num_sanity_val_steps: 0
   val_check_interval: 5000

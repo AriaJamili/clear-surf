@@ -88,6 +88,9 @@ class DTUDatasetBase():
         n_images = max([int(k.split('_')[-1]) for k in cams.keys()]) + 1
 
         for i in range(n_images):
+            if (self.split == 'test' and i % 8 != 0) or (self.split == 'train' and i % 8 == 0):
+                continue
+            
             world_mat, scale_mat = cams[f'world_mat_{i}'], cams[f'scale_mat_{i}']
             P = (world_mat @ scale_mat)[:3,:4]
             K, c2w = load_K_Rt_from_P(P)
@@ -105,23 +108,21 @@ class DTUDatasetBase():
             c2w_[:3,1:3] *= -1. # flip input sign
             self.all_c2w.append(c2w_[:3,:4])         
 
-            if self.split in ['train', 'val']:
-                img_path = os.path.join(self.config.root_dir, 'image', f'{i:06d}.png')
-                img = Image.open(img_path)
-                img = img.resize(self.img_wh, Image.BICUBIC)
-                img = TF.to_tensor(img).permute(1, 2, 0)[...,:3]
-
-                mask_path = os.path.join(mask_dir, f'{i:03d}.png')
-                mask = Image.open(mask_path).convert('L') # (H, W, 1)
-                mask = mask.resize(self.img_wh, Image.BICUBIC)
-                mask = TF.to_tensor(mask)[0]
-
-                self.all_fg_masks.append(mask) # (h, w)
-                self.all_images.append(img)
+            
+            img_path = os.path.join(self.config.root_dir, 'image', f'{i:06d}.png')
+            img = Image.open(img_path)
+            img = img.resize(self.img_wh, Image.BICUBIC)
+            img = TF.to_tensor(img).permute(1, 2, 0)[...,:3]
+            mask_path = os.path.join(mask_dir, f'{i:03d}.png')
+            mask = Image.open(mask_path).convert('L') # (H, W, 1)
+            mask = mask.resize(self.img_wh, Image.BICUBIC)
+            mask = TF.to_tensor(mask)[0]
+            self.all_fg_masks.append(mask) # (h, w)
+            self.all_images.append(img)
 
         self.all_c2w = torch.stack(self.all_c2w, dim=0)
 
-        if self.split == 'test':
+        if self.split == 'test-video':
             self.all_c2w = create_spheric_poses(self.all_c2w[:,:,3], n_steps=self.config.n_test_traj_steps)
             self.all_images = torch.zeros((self.config.n_test_traj_steps, self.h, self.w, 3), dtype=torch.float32)
             self.all_fg_masks = torch.zeros((self.config.n_test_traj_steps, self.h, self.w), dtype=torch.float32)
