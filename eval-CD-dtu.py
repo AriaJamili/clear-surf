@@ -1,26 +1,9 @@
 #!/usr/bin/env python3
 
-#get chamfer distance comparisons on DTU between gt_mesh, ours
-# It assumes we have created our meshes using create_my_meshes.py and they are at PACKAGE_ROOT/results/output_permuto_sdf_meshes/
-
-####Call with######
-# ./permuto_sdf_py/experiments/evaluation/evaluate_chamfer_distance.py --comp_name comp_1  [--with_mask]
-
-
-
-
 import torch
 import torchvision
-
-import sys
 import os
-import numpy as np
-import time
 import argparse
-
-#from datasets.dtu import DTUDatasetBase
-import scripts.list_of_training_scenes as list_scenes
-from scripts import mesh_filtering
 
 import numpy as np
 import cv2 as cv
@@ -32,8 +15,8 @@ import sklearn.neighbors as skln
 from tqdm import tqdm
 import multiprocessing as mp
 import cv2
-import subprocess
-from PIL import Image
+
+from scripts.list_of_meshs import mesh_path
 
 
 torch.manual_seed(42)
@@ -59,7 +42,7 @@ def write_vis_pcd(file, points, colors):
     pcd.colors = o3d.utility.Vector3dVector(colors)
     o3d.io.write_point_cloud(file, pcd)
 
-def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
+def eval(in_file, scene, pcd_dir, eval_dir, pbar, suffix=""):
     data_mesh = o3d.io.read_triangle_mesh(str(in_file))
 
     data_mesh.remove_unreferenced_vertices()
@@ -71,7 +54,7 @@ def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
     patch = 60
     thresh = 0.2  # downsample density
 
-    pbar = tqdm(total=8)
+    pbar.update(1)
     pbar.set_description('read data mesh')
 
     vertices = np.asarray(data_mesh.vertices)
@@ -121,7 +104,7 @@ def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
     
     pbar.update(1)
     pbar.set_description('masking data pcd')
-    obs_mask_file = loadmat(f'{dataset_dir}/ObsMask/ObsMask{scene}_10.mat')
+    obs_mask_file = loadmat(f'{pcd_dir}/ObsMask/ObsMask{scene}_10.mat')
     ObsMask, BB, Res = [obs_mask_file[attr] for attr in ['ObsMask', 'BB', 'Res']]
     BB = BB.astype(np.float32)
 
@@ -136,7 +119,7 @@ def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
 
     pbar.update(1)
     pbar.set_description('read STL pcd')
-    stl_pcd = o3d.io.read_point_cloud(f'{dataset_dir}/Points/stl/stl{scene:03}_total.ply')
+    stl_pcd = o3d.io.read_point_cloud(f'{pcd_dir}/stl/stl{scene:03}_total-cleaned.ply')
     stl = np.asarray(stl_pcd.points)
 
     pbar.update(1)
@@ -148,7 +131,7 @@ def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
 
     pbar.update(1)
     pbar.set_description('compute stl2data')
-    ground_plane = loadmat(f'{dataset_dir}/ObsMask/Plane{scene}.mat')['P']
+    ground_plane = loadmat(f'{pcd_dir}/ObsMask/Plane{scene}.mat')['P']
 
     stl_hom = np.concatenate([stl, np.ones_like(stl[:, :1])], -1)
     above = (ground_plane.reshape((1, 4)) * stl_hom).sum(-1) > 0
@@ -181,7 +164,7 @@ def eval(in_file, scene, dataset_dir, eval_dir, suffix=""):
     over_all = (mean_d2s + mean_s2d) / 2
 
     with open(f'{eval_dir}/result{suffix}.txt', 'a') as f:
-        f.write(f'scene: {mean_d2s} {mean_s2d} {over_all}\n')
+        f.write(f'scene {scene}: {mean_d2s} {mean_s2d} {over_all}\n')
 
     return [mean_d2s, mean_s2d, over_all]
 
@@ -217,49 +200,6 @@ class EvalResults:
 
         return self.scene_nr2overall 
 
-def run_eval(mesh_path, scene_nr, dataset_dir, output_path ):
-    
-    #get the path to the evaluation script which is in ./DTUeval-python/eval.py
-    cur_file_path=os.path.dirname(os.path.abspath(__file__))
-    eval_script_path=os.path.join(cur_file_path,"scripts/DTUeval-python/eval.py")
-
-    
-    output_eval=subprocess.check_output([
-            "python3", 
-            eval_script_path, 
-            "--data", mesh_path, 
-            "--scan", scene_nr, 
-            "--mode", "mesh", 
-            "--dataset_dir", dataset_dir, 
-            "--vis_out_dir", output_path
-            ],  shell=False)
-
-    #parse the outputs in the 3 components of mean_d2s, mean_s2d, over_all
-    #the format is b'1.031434859827024 1.5483653154552615 1.2899000876411426\n'
-
-    #remove letters and split
-    output_eval=output_eval.decode("utf-8")
-    output_eval=output_eval.split()
-    output_eval=[float(x) for x in output_eval] #get to list fo floats
-
-
-    return output_eval
-
-def load_K_Rt_from_P(P=None):
-    out = cv2.decomposeProjectionMatrix(P)
-    K = out[0]
-    R = out[1]
-    t = out[2]
-
-    K = K / K[2, 2]
-    intrinsics = np.eye(4)
-    intrinsics[:3, :3] = K
-
-    pose = np.eye(4, dtype=np.float32)
-    pose[:3, :3] = R.transpose()
-    pose[:3, 3] = (t[:3] / t[3])[:, 0]
-
-    return intrinsics, pose
 
 #meshes trained without mask are actually cleaned by the mask by this code 
 # https://github.com/Totoro97/NeuS/issues/74
@@ -305,6 +245,10 @@ def clean_mesh(old_mesh_path, scan, dataset_path, output_path, model_name):
     new_faces[:, 2] = indexes[new_faces[:, 2]]
     new_vertices = old_vertices[np.where(mask)]
 
+    #new_vertices = new_vertices - np.mean(new_vertices)
+    #norm = np.linalg.norm(new_vertices)
+    #new_vertices = new_vertices / norm
+
     #new_mesh = trimesh.Trimesh(new_vertices, new_faces)
     
     #meshes = new_mesh.split(only_watertight=False)
@@ -327,83 +271,65 @@ def clean_mesh(old_mesh_path, scan, dataset_path, output_path, model_name):
 
     return mesh_path
 
-def clean_pcd(old_pcd_path, scan, dataset_path):
-    old_pcd = trimesh.load(old_pcd_path)
-    old_vertices = old_pcd.vertices[:]
-    mask = clean_points_by_mask(old_vertices, scan, dataset_path)
-    new_vertices = old_vertices[np.where(mask)]
-
-    new_pcd = trimesh.points.PointCloud(new_vertices)
-
-    return new_pcd
-
 def run():
 
-    dataset="dtu"
-    low_res=False
-    
     #argparse
     parser = argparse.ArgumentParser(description='Quantitative comparison')
     parser.add_argument('--with_mask', action='store_true', help="Set this to true in order to train with a mask")
     parser.add_argument('-p', '--path', type=str, default='/gris/gris-f/homestud/ajamili/datasets/DTU',
                        help='DTU data set path')
-    parser.add_argument('-m', '--model', type=str, default='NeuS-dtu',
+    parser.add_argument('--pcd', type=str, default='/gris/gris-f/homestud/ajamili/thesis-model/instant-nsr-pl/eval/DTU-GT',
+                       help='GT pcd set path')
+    parser.add_argument('-m', '--model', type=str, default='Model-A',
                        help='DTU data set path')
     args = parser.parse_args()
 
-    config_training="with_mask_"+str(args.with_mask)
-    # if not args.with_mask:
-        # config_training+="_clean" #we use the cleaned up mesh that we get after runnign clean_mesh.py
 
     #path of my meshes
     root= os.path.dirname(os.path.abspath(__file__))
-    results_path=os.path.join(root, "results")
-    my_meshes_path=os.path.join(results_path, dataset)
-    #path for gt
-    gt_meshes_path=os.path.join(args.path, 'Points/stl')
+    results_path=os.path.join(root, "eval")
+    my_meshes_path=os.path.join(results_path, "input")
     #outputs path where to dump the results after the evaluation
-    output_path=os.path.join(results_path,"output_eval_chamfer_dist",dataset,config_training)
-    os.makedirs( output_path, exist_ok=True)
-
+    
     print("Data Set Path: ", args.path)
-    print("Data Set MesH Path: ", gt_meshes_path)
+    print("GT PCD Set Path: ", args.pcd)
     print("Model Mesh Path: ", my_meshes_path)
 
 
-    results_mine=EvalResults() 
+    results_mine={"Model-A": EvalResults(),"Model-B": EvalResults() , "Model-C": EvalResults() , "INSR" :EvalResults()}
 
-    #scenes_list=list_scenes.datasets[dataset]
+    scenes_list=["dtu_scan105", "dtu_scan106", "dtu_scan110", "dtu_scan114", "dtu_scan118", "dtu_scan122", "dtu_scan24", "dtu_scan37", "dtu_scan40", "dtu_scan55", "dtu_scan63", "dtu_scan65", "dtu_scan69", "dtu_scan83", "dtu_scan97"]
 
-    scenes_list = ["dtu_scan63"]
+    
 
-    dataset_config= dotdict(dict(name ="dtu", root_dir = "??", cameras_file = "cameras_sphere.npz",img_downscale = 2, apply_mask = "false"))
-    tmp_mesh_path=os.path.join(results_path,"tmp")
-    os.makedirs( tmp_mesh_path, exist_ok=True)
-
-    for scan_name in scenes_list:
-        print("scan_name: ",scan_name)
-        root_dir_scene = os.path.join(args.path, scan_name)
-        dataset_config.root_dir = root_dir_scene
-        scan_nr=int(scan_name.replace('dtu_scan', ''))
-
-        #get my mesh for this scene
-        #my_mesh_path=os.path.join(my_meshes_path, args.model+"-"+scan_name+".obj")
-        #my_mesh_path = "/gris/gris-f/homestud/ajamili/thesis-model/instant-nsr-pl/results/tmp/NeuS-dtu-dtu_scan24-cleaned.ply"
-        my_mesh_path = "/gris/gris-f/homestud/ajamili/thesis-model/instant-nsr-pl/exp/Model-C-dtu-dtu_scan63/@20230707-062520/save/Model-C-dtu-dtu_scan63-it10000.obj"
-        print("my_mesh_path is ", my_mesh_path)
-        if not os.path.isfile(my_mesh_path):
-            print("######COULD NOT FIND:  ", my_mesh_path)
-            exit(1)
-        else:
+    for model_name in tqdm(mesh_path, unit="model"): 
+        tmp_mesh_path=os.path.join(results_path,f"tmp-{model_name}")
+        os.makedirs( tmp_mesh_path, exist_ok=True)
+        print("**~**" * 50)
+        print("Evaluate ", model_name)
+        output_path=os.path.join(results_path,"output_eval_chamfer_dist", model_name)
+        os.makedirs(output_path, exist_ok=True)
+        for scan_name in tqdm(scenes_list, desc="Evaluate", unit="scan") :
+            scan_nr=int(scan_name.replace('dtu_scan', ''))
+            print("scan : ", scan_nr)
+            my_mesh_path = mesh_path[model_name][scan_name]
+            print("my_mesh_path is ", my_mesh_path)
+            if not os.path.isfile(my_mesh_path):
+                print("######COULD NOT FIND:  ", my_mesh_path)
+                exit(1)
+            else:
+                pbar = tqdm(total=9)
+                pbar.set_description('cleaning input mesh')
+                my_mesh_path=clean_mesh(my_mesh_path, scan_nr,  args.path, tmp_mesh_path, model_name)
+                # run DTU evaluation 
+                # https://github.com/jzhangbs/DTUeval-python
+                output_eval_my_mesh = eval(my_mesh_path,scan_nr, args.pcd, output_path, pbar, suffix=model_name)
+                print("output_eval_my_mesh ",  output_eval_my_mesh)
+                results_mine[model_name].update(scan_nr, output_eval_my_mesh[0], output_eval_my_mesh[1], output_eval_my_mesh[2])
             
-            my_mesh_path=clean_mesh(my_mesh_path, scan_nr,  args.path, tmp_mesh_path, args.model)
-            #scene_nr_filled=str(scan_nr).zfill(3)
         
-            #run DTU evaluation 
-            # https://github.com/jzhangbs/DTUeval-python
-            output_eval_my_mesh = eval(my_mesh_path,scan_nr,args.path,output_path,suffix="Model-A")
-            print("output_eval_my_mesh", output_eval_my_mesh)
-            results_mine.update(scan_nr, output_eval_my_mesh[0], output_eval_my_mesh[1], output_eval_my_mesh[2])
+    print("**~**" * 50)
+            
 
 
       
@@ -411,22 +337,13 @@ def run():
     #finished reading all scenes
     #print results
     ####MINE
-    print("---------MINE--------")
-    #mine_avg=results_mine.get_results_avg() 
-    #mine_per_scene=results_mine.get_results_per_scene()
-    #print("mine_avg_overall", mine_avg[2])
-    #print("mine_per_scene", mine_per_scene)
+    #print("---------MINE--------")
+    for model in results_mine:
+        mine_avg=results_mine[model].get_results_avg() 
+        mine_per_scene=results_mine[model].get_results_per_scene()
+        print("mine_avg_overall ", model, ": ", mine_avg[2])
+        print("mine_per_scene ", model, ": ", mine_per_scene)
 
-
-class dotdict(dict):
-    __getattr__ = dict.get
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
-
-
-def scale_anything(d):
-    r = -(d[1:] + d[0:]) /2
-    return r[0]
 
 def main():
     run()
@@ -434,16 +351,4 @@ def main():
 
 
 if __name__ == "__main__":
-     main()  # This is what you would have, but the following is useful:
-
-    # # These are temporary, for debugging, so meh for programming style.
-    # import sys, trace
-
-    # # If there are segfaults, it's a good idea to always use stderr as it
-    # # always prints to the screen, so you should get as much output as
-    # # possible.
-    # sys.stdout = sys.stderr
-
-    # # Now trace execution:
-    # tracer = trace.Trace(trace=1, count=0, ignoredirs=["/usr", sys.prefix])
-    # tracer.run('main()')
+     main() 
